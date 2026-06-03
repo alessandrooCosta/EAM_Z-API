@@ -1,25 +1,48 @@
 import os
-import uvicorn  # Importante: Não esqueça desta importação!
-from fastapi import FastAPI, HTTPException
+import uvicorn
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
+import logging
+from dotenv import load_dotenv
 
-app = FastAPI()
+# Carrega variáveis do .env (se existir)
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Configurações
+ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
+# URL base para instâncias Mobile conforme documentação do Postman
+ZAPI_MOBILE_URL = "https://api.z-api.io/instances/mobile"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.http_client = httpx.AsyncClient(timeout=30.0)
+    yield
+    await app.state.http_client.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Em produção, substitua "*" pela URL do EAM do seu cliente
-    allow_credentials=True,
-    allow_methods=["*"],  # Permite GET, POST, OPTIONS, etc.
+    allow_origins=["*"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Armazena temporariamente o estado da ativação
+# Armazena estado da ativação (apenas para memória de execução)
 pending_activations = {}
+
 
 class RequestAtivacao(BaseModel):
     numero_master: str
+
 
 class RequestValidacao(BaseModel):
     numero_master: str
@@ -28,54 +51,53 @@ class RequestValidacao(BaseModel):
 
 @app.post("/iniciar-ativacao")
 async def iniciar_ativacao(req: RequestAtivacao):
-    headers = {
-        "Client-Token": "Faf52a7f373cc4792a63d0026a28eb7fdS",
-        "Content-Type": "application/json"
-    }
+    if not ZAPI_CLIENT_TOKEN:
+        raise HTTPException(status_code=500, detail="Token não configurado.")
 
-    # O contexto do client deve englobar toda a lógica de rede
-    async with httpx.AsyncClient() as client:
-        # Tente usar o endpoint padrão de instâncias da Z-API
-        # O corpo do JSON deve seguir o que a doc da Z-API pede para criação mobile
-        resp = await client.post(
-            "https://api.z-api.io/instances",
+    headers = {"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"}
+
+    try:
+        # Passo 1: Registro do dispositivo (Mobile)
+        resp = await app.state.http_client.post(
+            f"{ZAPI_MOBILE_URL}/register",
             headers=headers,
             json={"phone": req.numero_master}
         )
-
+        resp.raise_for_status()
         data = resp.json()
-        print(f"DEBUG: Resposta Z-API: {data}")
 
-        # Verificamos se a resposta veio com instanceId (ou o nome que a Z-API usa)
-        # Atenção: Algumas instâncias da Z-API retornam 'instanceId' apenas após o QR Code
-        if 'instanceId' in data:
-            pending_activations[req.numero_master] = data['instanceId']
-            return {"status": "SMS enviado. Aguardando código."}
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Z-API não retornou instanceId. Resposta: {data}"
-            )
+        logger.info(f"Registro Z-API: {data}")
+
+        # Ajuste esta chave se a Z-API retornar algo diferente de 'instanceId'
+        pending_activations[req.numero_master] = req.numero_master
+        return {"status": "SMS solicitado com sucesso."}
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Erro registro: {e.response.text}")
+        raise HTTPException(status_code=400, detail="Erro ao registrar telefone.")
+
 
 @app.post("/finalizar-ativacao")
 async def finalizar_ativacao(req: RequestValidacao):
-    instance_id = pending_activations.get(req.numero_master)
+    headers = {"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"}
 
-    if not instance_id:
-        raise HTTPException(status_code=404, detail="Ativação não iniciada para este número.")
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"https://api.z-api.io/instances/{instance_id}/validate-code",
-            json={"code": req.codigo_sms}
+    try:
+        # Passo 2: Validação do código PIN
+        resp = await app.state.http_client.post(
+            f"{ZAPI_MOBILE_URL}/code",
+            headers=headers,
+            json={"phone": req.numero_master, "code": req.codigo_sms}
         )
 
         if resp.status_code == 200:
-            token_final = resp.json().get('token')
-            # Aqui você pode salvar o token em um banco ou arquivo
-            return {"status": "Ativação concluída", "token": token_final}
+            token = resp.json().get('token')
+            return {"status": "Ativação concluída", "token": token}
 
-    raise HTTPException(status_code=400, detail="Código inválido ou erro na ZAPI")
+        raise HTTPException(status_code=400, detail="Código inválido.")
+    except Exception as e:
+        logger.error(f"Erro validação: {str(e)}")
+        raise HTTPException(status_code=500, detail="Erro no servidor.")
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
