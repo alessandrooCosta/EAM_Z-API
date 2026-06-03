@@ -47,7 +47,7 @@ async def finalizar_ativacao(req: RequestValidacao):
             # Aqui você pode salvar o token em um banco ou arquivo
             return {"status": "Ativação concluída", "token": token_final}
 
-    raise HTTPException(status_code=400, detail="Código inválido ou erro na Z-API")
+    raise HTTPException(status_code=400, detail="Código inválido ou erro na ZAPI")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
