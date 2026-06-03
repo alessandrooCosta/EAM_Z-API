@@ -28,6 +28,17 @@ class RequestValidacao(BaseModel):
 
 @app.post("/iniciar-ativacao")
 async def iniciar_ativacao(req: RequestAtivacao):
+
+    headers = {
+        "Client-Token": "Faf52a7f373cc4792a63d0026a28eb7fdS"
+    }
+
+    resp = await client.post(
+        "https://api.z-api.io/instances",  # URL base de instâncias
+        headers=headers,
+        json={"phone": req.numero_master}
+    )
+
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://api.z-api.io/instances/create-mobile",
