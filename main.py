@@ -25,18 +25,29 @@ class RequestValidacao(BaseModel):
     numero_master: str
     codigo_sms: str
 
+
 @app.post("/iniciar-ativacao")
 async def iniciar_ativacao(req: RequestAtivacao):
     async with httpx.AsyncClient() as client:
-        # Nota: Verifique se o endpoint na documentação da Z-API
-        # é exatamente /instances/create-mobile
         resp = await client.post(
             "https://api.z-api.io/instances/create-mobile",
             json={"phone": req.numero_master}
         )
         data = resp.json()
-        pending_activations[req.numero_master] = data['instanceId']
-    return {"status": "SMS enviado. Aguardando código."}
+
+        # LOG PARA DEBUG: Isso aparecerá nos logs do Render
+        print(f"DEBUG: Resposta completa da Z-API: {data}")
+
+        # Verificação de segurança
+        if 'instanceId' in data:
+            pending_activations[req.numero_master] = data['instanceId']
+            return {"status": "SMS enviado. Aguardando código."}
+        else:
+            # Se não encontrar, lança um erro amigável para você ver o porquê
+            raise HTTPException(
+                status_code=500,
+                detail=f"Z-API não retornou instanceId. Resposta: {data}"
+            )
 
 @app.post("/finalizar-ativacao")
 async def finalizar_ativacao(req: RequestValidacao):
