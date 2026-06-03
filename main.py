@@ -28,33 +28,30 @@ class RequestValidacao(BaseModel):
 
 @app.post("/iniciar-ativacao")
 async def iniciar_ativacao(req: RequestAtivacao):
-
     headers = {
-        "Client-Token": "Faf52a7f373cc4792a63d0026a28eb7fdS"
+        "Client-Token": "Faf52a7f373cc4792a63d0026a28eb7fdS",
+        "Content-Type": "application/json"
     }
 
-    resp = await client.post(
-        "https://api.z-api.io/instances",  # URL base de instâncias
-        headers=headers,
-        json={"phone": req.numero_master}
-    )
-
+    # O contexto do client deve englobar toda a lógica de rede
     async with httpx.AsyncClient() as client:
+        # Tente usar o endpoint padrão de instâncias da Z-API
+        # O corpo do JSON deve seguir o que a doc da Z-API pede para criação mobile
         resp = await client.post(
-            "https://api.z-api.io/instances/create-mobile",
+            "https://api.z-api.io/instances",
+            headers=headers,
             json={"phone": req.numero_master}
         )
+
         data = resp.json()
+        print(f"DEBUG: Resposta Z-API: {data}")
 
-        # LOG PARA DEBUG: Isso aparecerá nos logs do Render
-        print(f"DEBUG: Resposta completa da Z-API: {data}")
-
-        # Verificação de segurança
+        # Verificamos se a resposta veio com instanceId (ou o nome que a Z-API usa)
+        # Atenção: Algumas instâncias da Z-API retornam 'instanceId' apenas após o QR Code
         if 'instanceId' in data:
             pending_activations[req.numero_master] = data['instanceId']
             return {"status": "SMS enviado. Aguardando código."}
         else:
-            # Se não encontrar, lança um erro amigável para você ver o porquê
             raise HTTPException(
                 status_code=500,
                 detail=f"Z-API não retornou instanceId. Resposta: {data}"
