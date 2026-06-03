@@ -1,10 +1,19 @@
 import os
 import uvicorn  # Importante: Não esqueça desta importação!
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Em produção, substitua "*" pela URL do EAM do seu cliente
+    allow_credentials=True,
+    allow_methods=["*"],  # Permite GET, POST, OPTIONS, etc.
+    allow_headers=["*"],
+)
 
 # Armazena temporariamente o estado da ativação
 pending_activations = {}
