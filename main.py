@@ -12,8 +12,11 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Configurações fixas para teste
 ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
-ZAPI_BASE_URL = "https://api.z-api.io/instances"
+INSTANCE_ID = "3F3FFF935EDF520CE87FFADA20428719"
+INSTANCE_TOKEN = "AB285FC72F855484BB843AB0"
+BASE_URL = f"https://api.z-api.io/instances/{INSTANCE_ID}/token/{INSTANCE_TOKEN}"
 
 
 @asynccontextmanager
@@ -32,8 +35,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-pending_activations = {}
-
 
 class RequestAtivacao(BaseModel):
     numero_master: str
@@ -48,63 +49,49 @@ class RequestValidacao(BaseModel):
 async def iniciar_ativacao(req: RequestAtivacao):
     headers = {"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"}
 
-    # PASSO 1: Criar a instância para obter o ID e o Token iniciais
     try:
-        resp_inst = await app.state.http_client.post(
-            f"{ZAPI_BASE_URL}",
+        # 1. Verificar disponibilidade
+        await app.state.http_client.post(
+            f"{BASE_URL}/mobile/register/check-availability",
             headers=headers,
             json={"phone": req.numero_master}
         )
-        resp_inst.raise_for_status()
-        data_inst = resp_inst.json()
-        instance_id = data_inst.get("instanceId")
-        instance_token = data_inst.get("token")
 
-        # PASSO 2: Registrar o dispositivo usando a URL com ID e Token
-        url_register = f"{ZAPI_BASE_URL}/{instance_id}/token/{instance_token}/mobile/register-device"
-        resp_reg = await app.state.http_client.post(url_register, headers=headers)
-        resp_reg.raise_for_status()
+        # 2. Solicitar código de confirmação (SMS)
+        resp = await app.state.http_client.post(
+            f"{BASE_URL}/mobile/register/request-code",
+            headers=headers,
+            json={"phone": req.numero_master}
+        )
 
-        pending_activations[req.numero_master] = {"id": instance_id, "token": instance_token}
-        return {"status": "SMS solicitado com sucesso."}
+        resp.raise_for_status()
+        logger.info(f"SMS solicitado para: {req.numero_master}")
+        return {"status": "Código SMS solicitado com sucesso."}
 
     except httpx.HTTPStatusError as e:
         logger.error(f"Erro na Z-API: {e.response.text}")
-        raise HTTPException(status_code=400, detail=f"Erro na Z-API: {e.response.text}")
+        raise HTTPException(status_code=400, detail=f"Erro no fluxo de registro: {e.response.text}")
 
 
-@app.post("/iniciar-ativacao")
-async def iniciar_ativacao(req: RequestAtivacao):
-    # Usando seus dados fixos
-    instance_id = "3F3FFF935EDF520CE87FFADA20428719"
-    instance_token = "AB285FC72F855484BB843AB0"
-
-    headers = {"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"}
-
-    # Tentativa de Registro (Verificando se é GET ou POST)
-    url_register = f"{ZAPI_BASE_URL}/{instance_id}/token/{instance_token}/mobile/register-device"
+@app.post("/finalizar-ativacao")
+async def finalizar_ativacao(req: RequestValidacao):
+    # 3. Confirmar código recebido por SMS
+    url = f"{BASE_URL}/mobile/register/confirm-code"
 
     try:
-        # A maioria das APIs Z-API Mobile aceita POST aqui.
-        # Se der 405 novamente, troque para 'await app.state.http_client.get'
         resp = await app.state.http_client.post(
-            url_register,
-            headers=headers,
-            json={"phone": req.numero_master}
+            url,
+            headers={"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"},
+            json={"phone": req.numero_master, "code": req.codigo_sms}
         )
 
-        if resp.status_code == 405:
-            # Tenta GET caso o POST falhe com 405
-            resp = await app.state.http_client.get(url_register, headers=headers)
+        if resp.status_code == 200:
+            return {"status": "Ativação concluída", "response": resp.json()}
 
-        resp.raise_for_status()
-
-        pending_activations[req.numero_master] = {"id": instance_id, "token": instance_token}
-        return {"status": "Registro enviado. Verifique o SMS."}
-
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Erro no registro: {e.response.text}")
-        raise HTTPException(status_code=400, detail=f"Erro: {e.response.text}")
+        raise HTTPException(status_code=400, detail="Código PIN inválido ou expirado.")
+    except Exception as e:
+        logger.error(f"Erro na validação: {str(e)}")
+        raise HTTPException(status_code=500, detail="Erro interno no servidor.")
 
 
 if __name__ == "__main__":
