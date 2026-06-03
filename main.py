@@ -8,14 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# Carrega variáveis do .env
 load_dotenv()
-
-# Configuração de logs
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configurações
 ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
 ZAPI_BASE_URL = "https://api.z-api.io/instances"
 
@@ -36,7 +32,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Dicionário para armazenar temporariamente os dados da instância (ID e TOKEN)
 pending_activations = {}
 
 
@@ -51,66 +46,54 @@ class RequestValidacao(BaseModel):
 
 @app.post("/iniciar-ativacao")
 async def iniciar_ativacao(req: RequestAtivacao):
-    if not ZAPI_CLIENT_TOKEN:
-        raise HTTPException(status_code=500, detail="Configuração de servidor incompleta.")
-
     headers = {"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"}
 
+    # PASSO 1: Criar a instância para obter o ID e o Token iniciais
     try:
-        # Endpoint Mobile: Registro do dispositivo
-        resp = await app.state.http_client.post(
-            f"{ZAPI_BASE_URL}/mobile/register",
+        resp_inst = await app.state.http_client.post(
+            f"{ZAPI_BASE_URL}",
             headers=headers,
             json={"phone": req.numero_master}
         )
-        resp.raise_for_status()
-        data = resp.json()
+        resp_inst.raise_for_status()
+        data_inst = resp_inst.json()
+        instance_id = data_inst.get("instanceId")
+        instance_token = data_inst.get("token")
 
-        logger.info(f"Registro Mobile Z-API: {data}")
+        # PASSO 2: Registrar o dispositivo usando a URL com ID e Token
+        url_register = f"{ZAPI_BASE_URL}/{instance_id}/token/{instance_token}/mobile/register-device"
+        resp_reg = await app.state.http_client.post(url_register, headers=headers)
+        resp_reg.raise_for_status()
 
-        # Salvamos o ID e o Token retornados para usar na validação
-        pending_activations[req.numero_master] = {
-            "id": data.get("instanceId"),
-            "token": data.get("token")
-        }
-
-        return {"status": "SMS enviado. Aguardando código."}
+        pending_activations[req.numero_master] = {"id": instance_id, "token": instance_token}
+        return {"status": "SMS solicitado com sucesso."}
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"Erro registro Z-API: {e.response.text}")
-        raise HTTPException(status_code=400, detail=f"Erro ao registrar telefone: {e.response.text}")
+        logger.error(f"Erro na Z-API: {e.response.text}")
+        raise HTTPException(status_code=400, detail=f"Erro na Z-API: {e.response.text}")
 
 
 @app.post("/finalizar-ativacao")
 async def finalizar_ativacao(req: RequestValidacao):
-    # Recupera os dados salvos do passo anterior
     data = pending_activations.get(req.numero_master)
     if not data:
         raise HTTPException(status_code=404, detail="Ativação não iniciada.")
 
-    instance_id = data.get("id")
-    instance_token = data.get("token")
-
-    headers = {"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"}
+    url = f"{ZAPI_BASE_URL}/{data['id']}/token/{data['token']}/mobile/confirm-pin-code"
 
     try:
-        # Endpoint Mobile: Confirmação de PIN (conforme documentação do Postman)
-        url = f"{ZAPI_BASE_URL}/{instance_id}/token/{instance_token}/mobile/confirm-pin-code"
         resp = await app.state.http_client.post(
             url,
-            headers=headers,
+            headers={"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"},
             json={"code": req.codigo_sms}
         )
-
         if resp.status_code == 200:
-            # Removemos da lista de pendentes após sucesso
             pending_activations.pop(req.numero_master, None)
             return {"status": "Ativação concluída", "response": resp.json()}
 
         raise HTTPException(status_code=400, detail="Código PIN inválido.")
     except Exception as e:
-        logger.error(f"Erro na validação: {str(e)}")
-        raise HTTPException(status_code=500, detail="Erro interno na validação.")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
