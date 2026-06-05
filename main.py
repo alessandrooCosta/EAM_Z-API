@@ -65,7 +65,7 @@ async def iniciar_ativacao(req: RequestAtivacao):
         pending_activations[req.numero_master] = {"id": instance_id, "token": instance_token}
 
         # 2. Solicita o código SMS
-        url_code = f"{ZAPI_BASE_URL}/{instance_id}/token/{instance_token}/phone-code/{req.numero_master}"
+        url_code = f"{BASE_URL}/{instance_id}/token/{instance_token}/phone-code/{req.numero_master}"
         resp_code = await app.state.http_client.post(url_code, headers=headers)
         resp_code.raise_for_status()
 
