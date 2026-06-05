@@ -50,28 +50,31 @@ async def iniciar_ativacao(req: RequestAtivacao):
     headers = {"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"}
 
     try:
-        # 1. Verificar disponibilidade
-        await app.state.http_client.post(
-            f"{BASE_URL}/mobile/register/check-availability",
-            headers=headers,
-            json={"phone": req.numero_master}
-        )
-
-        # 2. Solicitar código de confirmação (SMS)
+        # 1. Cria a instância dinamicamente
         resp = await app.state.http_client.post(
-            f"{BASE_URL}/mobile/register/request-code",
+            f"{ZAPI_BASE_URL}",
             headers=headers,
             json={"phone": req.numero_master}
         )
+        data = resp.json()
+        instance_id = data.get("instanceId")
+        instance_token = data.get("token")
 
-        resp.raise_for_status()
-        logger.info(f"SMS solicitado para: {req.numero_master}")
-        return {"status": "Código SMS solicitado com sucesso."}
+        # Armazena para usar no /finalizar-ativacao
+        pending_activations[req.numero_master] = {"id": instance_id, "token": instance_token}
 
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Erro na Z-API: {e.response.text}")
-        raise HTTPException(status_code=400, detail=f"Erro no fluxo de registro: {e.response.text}")
+        # 2. Solicita o código SMS usando a URL que você identificou
+        # Note que o número precisa estar sem o '+' ou caracteres especiais
+        url_code = f"{ZAPI_BASE_URL}/{instance_id}/token/{instance_token}/phone-code/{req.numero_master}"
 
+        resp_code = await app.state.http_client.post(url_code, headers=headers)
+        resp_code.raise_for_status()
+
+        return {"status": "Instância criada e SMS solicitado."}
+
+    except Exception as e:
+        logger.error(f"Erro no fluxo: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/finalizar-ativacao")
 async def finalizar_ativacao(req: RequestValidacao):
