@@ -12,11 +12,12 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configurações fixas para teste
+# Configurações
 ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
-INSTANCE_ID = "3F427F76F29322EADCBA7AE31EDEB32B"
-INSTANCE_TOKEN = "03BA98B531E87A53E5328605"
-BASE_URL = f"https://api.z-api.io/instances/{INSTANCE_ID}/token/{INSTANCE_TOKEN}"
+BASE_URL = "https://api.z-api.io/instances"
+
+# --- A VARIÁVEL DEVE FICAR AQUI, FORA DAS FUNÇÕES ---
+pending_activations = {}
 
 
 @asynccontextmanager
@@ -50,7 +51,7 @@ async def iniciar_ativacao(req: RequestAtivacao):
     headers = {"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"}
 
     try:
-        # 1. Cria a instância dinamicamente
+        # 1. Cria a instância
         resp = await app.state.http_client.post(
             f"{BASE_URL}",
             headers=headers,
@@ -60,13 +61,11 @@ async def iniciar_ativacao(req: RequestAtivacao):
         instance_id = data.get("instanceId")
         instance_token = data.get("token")
 
-        # Armazena para usar no /finalizar-ativacao
+        # Armazena globalmente
         pending_activations[req.numero_master] = {"id": instance_id, "token": instance_token}
 
-        # 2. Solicita o código SMS usando a URL que você identificou
-        # Note que o número precisa estar sem o '+' ou caracteres especiais
-        url_code = f"{BASE_URL}/{instance_id}/token/{instance_token}/phone-code/{req.numero_master}"
-
+        # 2. Solicita o código SMS
+        url_code = f"{ZAPI_BASE_URL}/{instance_id}/token/{instance_token}/phone-code/{req.numero_master}"
         resp_code = await app.state.http_client.post(url_code, headers=headers)
         resp_code.raise_for_status()
 
@@ -76,25 +75,29 @@ async def iniciar_ativacao(req: RequestAtivacao):
         logger.error(f"Erro no fluxo: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/finalizar-ativacao")
 async def finalizar_ativacao(req: RequestValidacao):
-    # 3. Confirmar código recebido por SMS
-    url = f"{BASE_URL}/mobile/register/confirm-code"
+    # Acesso seguro à variável global
+    data = pending_activations.get(req.numero_master)
+    if not data:
+        raise HTTPException(status_code=404, detail="Ativação não iniciada.")
+
+    url = f"{BASE_URL}/{data['id']}/token/{data['token']}/mobile/confirm-pin-code"
 
     try:
         resp = await app.state.http_client.post(
             url,
             headers={"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"},
-            json={"phone": req.numero_master, "code": req.codigo_sms}
+            json={"code": req.codigo_sms}
         )
-
         if resp.status_code == 200:
+            pending_activations.pop(req.numero_master, None)
             return {"status": "Ativação concluída", "response": resp.json()}
 
-        raise HTTPException(status_code=400, detail="Código PIN inválido ou expirado.")
+        raise HTTPException(status_code=400, detail="Código PIN inválido.")
     except Exception as e:
-        logger.error(f"Erro na validação: {str(e)}")
-        raise HTTPException(status_code=500, detail="Erro interno no servidor.")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
