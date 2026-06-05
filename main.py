@@ -52,7 +52,7 @@ async def iniciar_ativacao(req: RequestAtivacao):
     try:
         # 1. Cria a instância dinamicamente
         resp = await app.state.http_client.post(
-            f"{ZAPI_BASE_URL}",
+            f"{BASE_URL}",
             headers=headers,
             json={"phone": req.numero_master}
         )
@@ -65,7 +65,7 @@ async def iniciar_ativacao(req: RequestAtivacao):
 
         # 2. Solicita o código SMS usando a URL que você identificou
         # Note que o número precisa estar sem o '+' ou caracteres especiais
-        url_code = f"{ZAPI_BASE_URL}/{instance_id}/token/{instance_token}/phone-code/{req.numero_master}"
+        url_code = f"{BASE_URL}/{instance_id}/token/{instance_token}/phone-code/{req.numero_master}"
 
         resp_code = await app.state.http_client.post(url_code, headers=headers)
         resp_code.raise_for_status()
