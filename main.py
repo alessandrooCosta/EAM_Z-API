@@ -44,14 +44,13 @@ class RequestValidacao(BaseModel):
 @app.post("/iniciar-ativacao")
 async def iniciar_ativacao(req: RequestAtivacao):
     headers = {"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"}
-
-    # Endpoint para solicitar o código SMS usando a instância fixa
     url_code = f"{BASE_URL}/phone-code/{req.numero_master}"
 
     try:
         resp = await app.state.http_client.get(url_code, headers=headers)
         resp.raise_for_status()
         logger.info(f"SMS solicitado para: {req.numero_master}")
+        data = resp.json()
         return {"status": "Código SMS solicitado com sucesso."}
     except Exception as e:
         logger.error(f"Erro ao solicitar SMS: {str(e)}")
