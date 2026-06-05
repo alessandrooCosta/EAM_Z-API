@@ -18,7 +18,6 @@ INSTANCE_ID = "3F427F76F29322EADCBA7AE31EDEB32B"
 INSTANCE_TOKEN = "03BA98B531E87A53E5328605"
 BASE_URL = f"https://api.z-api.io/instances/{INSTANCE_ID}/token/{INSTANCE_TOKEN}"
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.http_client = httpx.AsyncClient(timeout=30.0)
@@ -35,15 +34,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 class RequestAtivacao(BaseModel):
     numero_master: str
-
 
 class RequestValidacao(BaseModel):
     numero_master: str
     codigo_sms: str
-
 
 @app.post("/iniciar-ativacao")
 async def iniciar_ativacao(req: RequestAtivacao):
@@ -53,14 +49,13 @@ async def iniciar_ativacao(req: RequestAtivacao):
     url_code = f"{BASE_URL}/phone-code/{req.numero_master}"
 
     try:
-        resp = await app.state.http_client.post(url_code, headers=headers)
+        resp = await app.state.http_client.get(url_code, headers=headers)
         resp.raise_for_status()
         logger.info(f"SMS solicitado para: {req.numero_master}")
         return {"status": "Código SMS solicitado com sucesso."}
     except Exception as e:
         logger.error(f"Erro ao solicitar SMS: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/finalizar-ativacao")
 async def finalizar_ativacao(req: RequestValidacao):
