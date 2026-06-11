@@ -1,82 +1,60 @@
-import os
-import uvicorn
-import logging
+from fastapi import FastAPI, Request
 import httpx
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from dotenv import load_dotenv
 
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+app = FastAPI()
 
-# Configurações fixas conforme solicitado
-ZAPI_CLIENT_TOKEN = os.getenv("ZAPI_CLIENT_TOKEN")
-INSTANCE_ID = "3F427F76F29322EADCBA7AE31EDEB32B"
-INSTANCE_TOKEN = "03BA98B531E87A53E5328605"
-BASE_URL = f"https://api.z-api.io/instances/{INSTANCE_ID}/token/{INSTANCE_TOKEN}"
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    app.state.http_client = httpx.AsyncClient(timeout=30.0)
-    yield
-    await app.state.http_client.aclose()
+# Configurações fixas que você definiu
+CONFIG = {
+    "USER": "ACOSTA",
+    "ORGANIZATION": "ASSET-TEST",
+    "EQUIPMENT_CODE": "AMI-0001",
+    "REQUEST_TYPE": "BRKD",
+    "TENANT": "IBNQI1720580460_DEM",
+    "API_KEY": "afa01ac01d-de5a-4732-9fbc-0417178a7d73",
+    "BASE_URL": "https://us1.eam.hxgnsmartcloud.com/axis/restservices"
+}
 
 
-app = FastAPI(lifespan=lifespan)
+async def abrir_os_no_eam(descricao_msg):
+    url = f"{CONFIG['BASE_URL']}/workorders"
+    headers = {
+        "tenant": CONFIG['TENANT'],
+        "x-api-key": CONFIG['API_KEY'],
+        "Content-Type": "application/json",
+        "accept": "application/json"
+    }
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    # Payload estruturado conforme suas exigências:
+    # Mantemos a hierarquia necessária, mas sem passar listas vazias
+    payload = {
+        "WORKORDERID": {
+            "DESCRIPTION": descricao_msg,
+            "ORGANIZATIONID": {"ORGANIZATIONCODE": CONFIG['ORGANIZATION']}
+        },
+        "EQUIPMENTID": {
+            "EQUIPMENTCODE": CONFIG['EQUIPMENT_CODE'],
+            "ORGANIZATIONID": {"ORGANIZATIONCODE": CONFIG['ORGANIZATION']}
+        },
+        "TYPE": {
+            "TYPECODE": CONFIG['REQUEST_TYPE']
+        },
+        "STATUS": {
+            "STATUSCODE": "R"
+        }
+    }
 
-class RequestAtivacao(BaseModel):
-    numero_master: str
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload, headers=headers)
+        return response.json()
 
-class RequestValidacao(BaseModel):
-    numero_master: str
-    codigo_sms: str
+@app.post("/webhook")
+async def webhook_whatsapp(request: Request):
+    data = await request.json()
+    mensagem = data.get("message", {}).get("text", "")
 
-@app.post("/iniciar-ativacao")
-async def iniciar_ativacao(req: RequestAtivacao):
-    headers = {"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"}
-    url_code = f"{BASE_URL}/phone-code/{req.numero_master}"
+    if mensagem:
+        resultado = await abrir_os_no_eam(mensagem)
+        print(f"EAM Response: {resultado}")
+        return {"status": "success", "eam_response": resultado}
 
-    try:
-        resp = await app.state.http_client.get(url_code, headers=headers)
-        resp.raise_for_status()
-        logger.info(f"SMS solicitado para: {req.numero_master}")
-        data = resp.json()
-        return {"status": "Código SMS solicitado com sucesso."}
-    except Exception as e:
-        logger.error(f"Erro ao solicitar SMS: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/finalizar-ativacao")
-async def finalizar_ativacao(req: RequestValidacao):
-    # Endpoint para confirmar o PIN enviado por SMS
-    url = f"{BASE_URL}/mobile/confirm-pin-code"
-
-    try:
-        resp = await app.state.http_client.post(
-            url,
-            headers={"Client-Token": ZAPI_CLIENT_TOKEN, "Content-Type": "application/json"},
-            json={"code": req.codigo_sms}
-        )
-
-        if resp.status_code == 200:
-            return {"status": "Ativação concluída", "response": resp.json()}
-
-        raise HTTPException(status_code=400, detail="Código PIN inválido ou erro na Z-API.")
-    except Exception as e:
-        logger.error(f"Erro na validação: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    return {"status": "error", "message": "Mensagem vazia"}
