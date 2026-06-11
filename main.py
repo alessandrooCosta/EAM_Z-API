@@ -58,3 +58,8 @@ async def webhook_whatsapp(request: Request):
         return {"status": "success", "eam_response": resultado}
 
     return {"status": "error", "message": "Mensagem vazia"}
+
+if __name__ == "__main__":
+    # O Render espera que a porta seja definida via variável de ambiente PORT
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
