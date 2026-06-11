@@ -28,6 +28,7 @@ async def abrir_os_no_eam(descricao_msg):
 
     # Payload estruturado conforme suas exigências:
     # Mantemos a hierarquia necessária, mas sem passar listas vazias
+    # Payload com o campo Departamento incluído
     payload = {
         "WORKORDERID": {
             "DESCRIPTION": descricao_msg,
@@ -42,6 +43,9 @@ async def abrir_os_no_eam(descricao_msg):
         },
         "STATUS": {
             "STATUSCODE": "R"
+        },
+        "DEPARTMENTID": {
+            "DEPARTMENTCODE": "*"  # O asterisco geralmente representa o departamento padrão do usuário
         }
     }
 
